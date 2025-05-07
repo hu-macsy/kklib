@@ -1,7 +1,7 @@
 #include "test.hpp"
 
 #include <kklib/graph.hpp>
-#include <kklib/next_storage.hpp>
+#include <kklib/storage.hpp>
 #include <kklib/util.hpp>
 
 #include <gtest/gtest.h>
