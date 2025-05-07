@@ -1,0 +1,12 @@
+[submodule "lib/args"]
+	path = lib/args
+	url = https://github.com/Taywee/args.git
+[submodule "lib/gtest"]
+	path = lib/gtest
+	url = https://github.com/google/googletest.git
+[submodule "lib/graph-ds-benchmark"]
+	path = lib/graph-ds-benchmark
+	url = https://github.com/hu-macsy/graph-ds-benchmark.git
+[submodule "lib/CLI11"]
+	path = lib/CLI11
+	url = https://github.com/CLIUtils/CLI11.git
