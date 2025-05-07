@@ -1,3 +1,18 @@
+# kklib
+
+kklib was the result of what needed to be changed with the original [KnightKing
+code](https://github.com/KnightKingWalk/KnightKing) in order to use it as a
+library. In addition, we've removed the graph I/O layer from the graph (engine)
+class which allows for any I/O module (layer) to read in graph files.
+
+We've tried to stay as close to the original code as possible.
+
+The provided [test files](/tests/) have not been touched and may therefore not compile.
+
+The documentation by the authors of KnightKing below has not been changed except
+for code examples or class names that needed to be corrected considering the new
+library structure, file, or class names.
+
 # KnightKing
 
 **KnightKing** is a general-purpose, distributed graph random walk engine. It provides:
@@ -208,7 +223,7 @@ WalkerConfig<real_t, EmptyData> walker_conf(34 /*walker number*/);
 **Step 4**: Define the extension component, which controls the termination condition and sets the probability to continue to walk:
 
 ```c++
-auto extension_comp = [&] (Walker<EmptyData>& walker, vertex_id_t current_v)
+auto extension_comp = [&] (Walker<EmptyData>& walker, VertexID current_v)
 {
     return 0.875; /*the probability to continue the walk*/
 };
@@ -236,7 +251,7 @@ Second, the edges are no longer identical. In real world, it is common that some
 In this case, we re-define the extension component, which sets the termination probability:
 
 ```c++
-auto extension_comp = [&] (Walker<EmptyData>& walker, vertex_id_t current_v)
+auto extension_comp = [&] (Walker<EmptyData>& walker, VertexID current_v)
 {
    return walker.step >= 10 ? 0.0 : 1.0; /*walk 10 steps then terminate*/
 };
@@ -245,7 +260,7 @@ auto extension_comp = [&] (Walker<EmptyData>& walker, vertex_id_t current_v)
 Then we define the static component, which tells how static properties such as edge weight affect the preference of walkers:
 
 ```c++
-auto static_comp = [&] (vertex_id_t v, AdjUnit<real_t> *edge)
+auto static_comp = [&] (VertexID v, AdjUnit<real_t> *edge)
 {
     return edge->data; /*edge->data is a real number denoting edge weight*/
 };
@@ -269,7 +284,7 @@ To do so, first add an additional property to walker definition, so that the wal
 ```c++
 struct WalkState
 {
-    vertex_id_t last_vertex;
+    VertexID last_vertex;
 };
 ```
 
@@ -282,12 +297,12 @@ WalkEngine<real_t, WalkState> graph;
 Next, define how to initiate and how to update the state:
 
 ```c++
-auto init_walker_func = [&] (Walker<WalkState> &walker, vertex_id_t start_vertex)
+auto init_walker_func = [&] (Walker<WalkState> &walker, VertexID start_vertex)
 {
     /*At first, the last vertex is not defined*/
     walker.data.last_vertex = UINT_MAX;
 };
-auto update_walker_func = [&] (Walker<WalkState> &walker, vertex_id_t current_v, AdjUnit<real_t> *edge)
+auto update_walker_func = [&] (Walker<WalkState> &walker, VertexID current_v, AdjUnit<real_t> *edge)
 {
     walker.data.last_vertex = current_v;
 };
@@ -297,7 +312,7 @@ WalkerConfig<real_t, WalkState> walker_conf(34, init_walker_func, update_walker_
 Then define dynamic component and its upper bound:
 
 ```c++
-auto dynamic_comp = [&] (Walker<WalkState> &walker, vertex_id_t current_v, AdjUnit<real_t> *edge)
+auto dynamic_comp = [&] (Walker<WalkState> &walker, VertexID current_v, AdjUnit<real_t> *edge)
 {
     if (walker.step == 0)
     {
@@ -313,7 +328,7 @@ auto dynamic_comp = [&] (Walker<WalkState> &walker, vertex_id_t current_v, AdjUn
         return 1.0;
     }
 };
-auto dynamic_comp_upperbound = [&] (vertex_id_t v_id, AdjList<real_t> *adj_lists)
+auto dynamic_comp_upperbound = [&] (VertexID v_id, AdjList<real_t> *adj_lists)
 {
     return 2.0;
 };
@@ -366,9 +381,9 @@ The class *WalkerConfig* defines walkers' properties. Its constructor is:
 ```c++
 WalkerConfig(
     walker_id_t walker_num,
-    std::function<void (Walker<walker_data_t>&, vertex_id_t)> walker_init_state_func = nullptr,
-    std::function<void (Walker<walker_data_t>&, vertex_id_t, AdjUnit<edge_data_t> *)> walker_update_state_func = nullptr,
-    std::function<vertex_id_t (walker_id_t)> walker_init_dist_func = nullptr
+    std::function<void (Walker<walker_data_t>&, VertexID)> walker_init_state_func = nullptr,
+    std::function<void (Walker<walker_data_t>&, VertexID, AdjUnit<edge_data_t> *)> walker_update_state_func = nullptr,
+    std::function<VertexID (walker_id_t)> walker_init_dist_func = nullptr
 )
 ```
 
@@ -380,8 +395,8 @@ WalkerConfig(
 
 **walker_init_dist_func**: This parameter is a function that takers a walker's id as input, and return the id of the vertex it starts to walk from. KnightKing provides two implementations for this function:
 
-- **std::function<vertex_id_t (walker_id_t)> get_equal_dist_func()**: This API returns a function that assigns i_th walker to (i % vertex_num)_th vertex.
-- **std::function<vertex_id_t (walker_id_t)> get_uniform_dist_func()**: This API returns a function that for each walker it randomly assign the walker to all vertices with equal probability.
+- **std::function<VertexID (walker_id_t)> get_equal_dist_func()**: This API returns a function that assigns i_th walker to (i % vertex_num)_th vertex.
+- **std::function<VertexID (walker_id_t)> get_uniform_dist_func()**: This API returns a function that for each walker it randomly assign the walker to all vertices with equal probability.
 
  Besides the above two functions, users can define custom functions as well.
 
@@ -393,13 +408,13 @@ To define the edge transition probability for random walk, users need to define 
 
 ```c++
 TransitionConfig(
-    std::function<real_t (Walker<walker_data_t>&, vertex_id_t)> extension_comp_func,
-    std::function<real_t (vertex_id_t, AdjUnit<edge_data_t>*)> static_comp_func = nullptr,
-    std::function<real_t (Walker<walker_data_t>&, vertex_id_t, AdjUnit<edge_data_t> *)> dynamic_comp_func = nullptr,
-    std::function<real_t (vertex_id_t, AdjList<edge_data_t>*)> dcomp_upperbound_func = nullptr,
-    std::function<real_t (vertex_id_t, AdjList<edge_data_t>*)> dcomp_lowerbound_func = nullptr,
-    std::function<void(Walker<walker_data_t>&, vertex_id_t, AdjList<edge_data_t>*, real_t&, vertex_id_t&)> outlier_upperbound_func = nullptr,
-    std::function<AdjUnit<edge_data_t>*(Walker<walker_data_t>&, vertex_id_t, AdjList<edge_data_t>*, vertex_id_t)> outlier_search_func = nullptr
+    std::function<real_t (Walker<walker_data_t>&, VertexID)> extension_comp_func,
+    std::function<real_t (VertexID, AdjUnit<edge_data_t>*)> static_comp_func = nullptr,
+    std::function<real_t (Walker<walker_data_t>&, VertexID, AdjUnit<edge_data_t> *)> dynamic_comp_func = nullptr,
+    std::function<real_t (VertexID, AdjList<edge_data_t>*)> dcomp_upperbound_func = nullptr,
+    std::function<real_t (VertexID, AdjList<edge_data_t>*)> dcomp_lowerbound_func = nullptr,
+    std::function<void(Walker<walker_data_t>&, VertexID, AdjList<edge_data_t>*, real_t&, VertexID&)> outlier_upperbound_func = nullptr,
+    std::function<AdjUnit<edge_data_t>*(Walker<walker_data_t>&, VertexID, AdjList<edge_data_t>*, VertexID)> outlier_search_func = nullptr
 )
 ```
 
@@ -441,15 +456,15 @@ In distributed environment, the previously visited vertex and currently residing
 
 ```c++
 SecondOrderTransitionConfig(
-    std::function<real_t (Walker<walker_data_t>&, vertex_id_t)> extension_comp_func,
-    std::function<real_t (vertex_id_t, AdjUnit<edge_data_t>*)> static_comp_func,
-    std::function<void (Walker<walker_data_t>&, walker_id_t, vertex_id_t, AdjUnit<edge_data_t> *)> post_query_func,
-    std::function<void (vertex_id_t, stateQuery<query_data_t> &, AdjList<edge_data_t>*)> respond_query_func,
-    std::function<real_t (Walker<walker_data_t>&, vertex_id_t, AdjUnit<edge_data_t> *)> dynamic_comp_func,
-    std::function<real_t (vertex_id_t, AdjList<edge_data_t>*)> dcomp_upperbound_func,
-    std::function<real_t (vertex_id_t, AdjList<edge_data_t>*)> dcomp_lowerbound_func = nullptr,
-    std::function<void(Walker<walker_data_t>&, vertex_id_t, AdjList<edge_data_t>*, real_t&, vertex_id_t&)> outlier_upperbound_func = nullptr,
-    std::function<AdjUnit<edge_data_t>*(Walker<walker_data_t>&, vertex_id_t, AdjList<edge_data_t>*, vertex_id_t)> outlier_search_func = nullptr
+    std::function<real_t (Walker<walker_data_t>&, VertexID)> extension_comp_func,
+    std::function<real_t (VertexID, AdjUnit<edge_data_t>*)> static_comp_func,
+    std::function<void (Walker<walker_data_t>&, walker_id_t, VertexID, AdjUnit<edge_data_t> *)> post_query_func,
+    std::function<void (VertexID, stateQuery<query_data_t> &, AdjList<edge_data_t>*)> respond_query_func,
+    std::function<real_t (Walker<walker_data_t>&, VertexID, AdjUnit<edge_data_t> *)> dynamic_comp_func,
+    std::function<real_t (VertexID, AdjList<edge_data_t>*)> dcomp_upperbound_func,
+    std::function<real_t (VertexID, AdjList<edge_data_t>*)> dcomp_lowerbound_func = nullptr,
+    std::function<void(Walker<walker_data_t>&, VertexID, AdjList<edge_data_t>*, real_t&, VertexID&)> outlier_upperbound_func = nullptr,
+    std::function<AdjUnit<edge_data_t>*(Walker<walker_data_t>&, VertexID, AdjList<edge_data_t>*, VertexID)> outlier_search_func = nullptr
 )
 ```
 
@@ -481,10 +496,10 @@ Instead of dumping the paths, users can directly pass the in-memory output data 
 struct PathSet
 {
     int seg_num;
-    vertex_id_t **path_set;
+    VertexID **path_set;
     walker_id_t **walker_id;
-    vertex_id_t ***path_begin;
-    vertex_id_t ***path_end;
+    VertexID ***path_begin;
+    VertexID ***path_end;
     step_t **path_length;
     walker_id_t *path_num;
 }
@@ -537,7 +552,7 @@ for (int i = 0; i < ps->seg_num; i++)
 **load_graph**: This function takes the vertex number and graph data file path as input, and loads the graph into memory.
 
 ```c++
-void load_graph(vertex_id_t vertex_num, const char* graph_file_path, bool load_as_undirected = false);
+void load_graph(VertexID vertex_num, const char* graph_file_path, bool load_as_undirected = false);
 ```
 
 #### Set Concurrency
@@ -551,13 +566,13 @@ void set_concurrency(int worker_num);
 
 There are several numerical constants that can be adjusted for performance tuning. They are defined in *include/constants.hpp*.
 
-**L1_CACHE_LINE_SIZE**: This constant tells KnightKing the size of L1 cache line. KnightKing uses this information to decide the size of paddings that are used to avoid performance degenerating caused by simultaneously writing to close positions by different threads.
+**l1_cache_line_size**: This constant tells KnightKing the size of L1 cache line. KnightKing uses this information to decide the size of paddings that are used to avoid performance degenerating caused by simultaneously writing to close positions by different threads.
 
-**THREAD_LOCAL_BUF_CAPACITY**: Each thread has its own local message buffer. Messages are first written to that buffer, then flushed to global buffer when the local buffer gets full. This constant defines how many messages the local buffer can hold.
+**thread_local_buf_capacity**: Each thread has its own local message buffer. Messages are first written to that buffer, then flushed to global buffer when the local buffer gets full. This constant defines how many messages the local buffer can hold.
 
-**OMP_PARALLEL_THRESHOLD**: This constant defines the threshold of the number of active walkers. Beyond the threshold KnightKing executes tasks concurrently using multi-threading, while below the threshold KnightKing executes the tasks without multi-threading
+**omp_parallel_threshold**: This constant defines the threshold of the number of active walkers. Beyond the threshold KnightKing executes tasks concurrently using multi-threading, while below the threshold KnightKing executes the tasks without multi-threading
 
-**PARALLEL_CHUNK_SIZE**: The tasks, oftentimes the walkers or queries, are grouped as chunks, then put into a task pool. This constant defines the multi-thread scheduling granularity.
+**parallel_chunk_size**: The tasks, oftentimes the walkers or queries, are grouped as chunks, then put into a task pool. This constant defines the multi-thread scheduling granularity.
 
 ## Publication
 
