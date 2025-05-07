@@ -1,50 +1,34 @@
-/*
- * The MIT License (MIT)
- *
- * Copyright (c) 2019 Ke Yang, Tsinghua University 
- * 
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- */
+#include "test.hpp"
+#include "test_walk.hpp"
 
-#include <stdio.h>
-#include <stdlib.h>
-
-#include <fstream>
-#include <vector>
-#include <utility>
-#include <queue>
-#include <type_traits>
+#include <kklib/graph.hpp>
+#include <kklib/metapath.hpp>
+#include <kklib/metascheme.hpp>
+#include <kklib/storage.hpp>
+#include <kklib/util.hpp>
+#include <kklib/walk.hpp>
 
 #include <gtest/gtest.h>
 
-#include "storage.hpp"
-#include "graph.hpp"
-#include "walk.hpp"
-#include "util.hpp"
-#include "test.hpp"
-#include "test_walk.hpp"
-#include "../apps/metapath.hpp"
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <queue>
+#include <type_traits>
+#include <utility>
+#include <vector>
 
 const int edge_type_num = 5;
 
-template<typename edge_data_t>
-void check_metapath_random_walk(vertex_id_t v_num, Edge<edge_data_t> *edges, edge_id_t e_num, walker_id_t walker_num, step_t walk_lenght, std::vector<std::vector<std::vector<bool> > > schemes, std::vector<std::vector<vertex_id_t> > &seq, std::vector<Walker<MetapathState> > &walker_init_state)
+template <typename edge_data_t>
+void check_metapath_random_walk(VertexID v_num,
+                                Edge<edge_data_t>* edges,
+                                edge_id_t e_num,
+                                walker_id_t walker_num,
+                                step_t walk_lenght,
+                                std::vector<std::vector<std::vector<bool>>> schemes,
+                                std::vector<std::vector<VertexID>>& seq,
+                                std::vector<Walker<MetapathState>>& walker_init_state)
 {
     size_t max_state_num = 0;
     for (auto &sch : schemes)
@@ -70,7 +54,7 @@ void check_metapath_random_walk(vertex_id_t v_num, Edge<edge_data_t> *edges, edg
     {
         std::sort(adj.begin(), adj.end(), [](const Edge<edge_data_t> a, const Edge<edge_data_t> b){return a.dst < b.dst;});
     }
-    auto get_edge_idx = [&] (vertex_id_t src, vertex_id_t dst)
+    auto get_edge_idx = [&](VertexID src, VertexID dst)
     {
         Edge<edge_data_t> target;
         target.dst = dst;
@@ -87,7 +71,7 @@ void check_metapath_random_walk(vertex_id_t v_num, Edge<edge_data_t> *edges, edg
     {
         scheme_id_t sch_id;
         meta_state_t state;
-        vertex_id_t vertex;
+        VertexID vertex;
     };
     for (walker_id_t v_i = 0; v_i < v_num; v_i ++)
     {
@@ -129,7 +113,7 @@ void check_metapath_random_walk(vertex_id_t v_num, Edge<edge_data_t> *edges, edg
         }
     }
     std::vector<std::vector<std::vector<double> > > std_trans_mat(v_num);
-    for (vertex_id_t v_i = 0; v_i < v_num; v_i++)
+    for (VertexID v_i = 0; v_i < v_num; v_i++)
     {
         std_trans_mat[v_i].resize(max_state_num);
         for (scheme_id_t sch_i = 0; sch_i < schemes.size(); sch_i++)
@@ -154,7 +138,7 @@ void check_metapath_random_walk(vertex_id_t v_num, Edge<edge_data_t> *edges, edg
         }
     }
     std::vector<std::vector<std::vector<double> > > real_trans_mat(v_num);
-    for (vertex_id_t v_i = 0; v_i < v_num; v_i++)
+    for (VertexID v_i = 0; v_i < v_num; v_i++)
     {
         real_trans_mat[v_i].resize(max_state_num);
         for (size_t s_i = 0; s_i < max_state_num; s_i++)
@@ -168,7 +152,7 @@ void check_metapath_random_walk(vertex_id_t v_num, Edge<edge_data_t> *edges, edg
         meta_state_t scheme_id = walker_init_state[w_i].data.scheme_id;
         for (step_t s_i = 0; s_i + 1 < seq[w_i].size(); s_i++)
         {
-            vertex_id_t current_v = seq[w_i][s_i];
+            VertexID current_v = seq[w_i][s_i];
             meta_state_t ms = (init_meta + s_i) % schemes[scheme_id].size();
             size_t state_id = get_state_id(scheme_id, ms);
             size_t edge_idx = get_edge_idx(seq[w_i][s_i], seq[w_i][s_i + 1]);
@@ -195,17 +179,16 @@ void check_metapath_random_walk(vertex_id_t v_num, Edge<edge_data_t> *edges, edg
     cmp_trans_matrix(real_flat_mat, std_flat_mat);
 }
 
-template<typename edge_data_t>
-void test_metapath(vertex_id_t v_num, int worker_number)
+template <typename edge_data_t> void test_metapath(VertexID v_num, int worker_number)
 {
-    WalkEngine<edge_data_t, MetapathState> graph;
+    kklib::LoadedGraphData graph_data = kklib::load_graph<edge_data_t>(v_num, test_data_file);
+    WalkEngine<edge_data_t, MetapathState> graph{ graph_data.v_num_param, graph_data.read_edges, graph_data.read_e_num };
     graph.set_concurrency(worker_number);
-    graph.load_graph(v_num, test_data_file);
 
     step_t walk_length = 80 + rand() % 20;
     walker_id_t walker_num = graph.get_vertex_num() * 500 + graph.get_edge_num() * 500 + rand() % 100;
-    MPI_Bcast(&walk_length, sizeof(walk_length), get_mpi_data_type<char>(), 0, MPI_COMM_WORLD);
-    MPI_Bcast(&walker_num, sizeof(walker_num), get_mpi_data_type<char>(), 0, MPI_COMM_WORLD);
+    MPI_Bcast(&walk_length, sizeof(walk_length), MPI_CHAR, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&walker_num, sizeof(walker_num), MPI_CHAR, 0, MPI_COMM_WORLD);
     std::vector<std::vector<std::vector<bool> > > schemes;
     if (get_mpi_rank() == 0)
     {
@@ -227,12 +210,12 @@ void test_metapath(vertex_id_t v_num, int worker_number)
         }
     }
     size_t scheme_num = schemes.size();
-    MPI_Bcast(&scheme_num, sizeof(scheme_num), get_mpi_data_type<char>(), 0, MPI_COMM_WORLD);
+    MPI_Bcast(&scheme_num, sizeof(scheme_num), MPI_CHAR, 0, MPI_COMM_WORLD);
     schemes.resize(scheme_num);
     for (int s_i = 0; s_i < scheme_num; s_i++)
     {
         size_t scheme_length = schemes[s_i].size();
-        MPI_Bcast(&scheme_length, sizeof(scheme_length), get_mpi_data_type<char>(), 0, MPI_COMM_WORLD);
+        MPI_Bcast(&scheme_length, sizeof(scheme_length), MPI_CHAR, 0, MPI_COMM_WORLD);
         schemes[s_i].resize(scheme_length);
         for (int l_i = 0; l_i < scheme_length; l_i++)
         {
@@ -240,7 +223,7 @@ void test_metapath(vertex_id_t v_num, int worker_number)
             for (int v_i = 0; v_i < edge_type_num; v_i++)
             {
                 bool val = schemes[s_i][l_i][v_i];
-                MPI_Bcast(&val, sizeof(val), get_mpi_data_type<char>(), 0, MPI_COMM_WORLD);
+                MPI_Bcast(&val, sizeof(val), MPI_CHAR, 0, MPI_COMM_WORLD);
                 schemes[s_i][l_i][v_i] = val;
             }
         }
@@ -248,7 +231,7 @@ void test_metapath(vertex_id_t v_num, int worker_number)
 
     metapath(&graph, schemes, walker_num, walk_length);
 
-    std::vector<std::vector<vertex_id_t> > rw_sequences;
+    std::vector<std::vector<VertexID>> rw_sequences;
     std::vector<Walker<MetapathState> > walker_init_state;
     graph.collect_walk_sequence(rw_sequences, walker_num);
     graph.collect_walker_init_state(walker_init_state);
@@ -285,7 +268,9 @@ std::function<void(WeightedMetaData&)> get_edge_data_gen_func<WeightedMetaData>(
     auto func = [] (WeightedMetaData &data)
     {
         data.meta_info = rand() % edge_type_num;
-        gen_rand_edge_data<real_t>(data.weight);
+        kklib::RandomEngine<real_t> random_engine;
+        constexpr uint32_t range = 5;
+        data.weight = random_engine(0., range);
     };
     return func;
 }
@@ -294,15 +279,15 @@ template<typename edge_data_t>
 void test_metapath()
 {
     edge_id_t e_nums_arr[] = {100, 200, 300, 400, 500, 600};
-    vertex_id_t v_num = 50 + rand() % 20;
+    VertexID v_num = 50 + rand() % 20;
     std::vector<edge_id_t> e_nums(e_nums_arr, e_nums_arr + 6);
     /*
     size_t e_nums_arr[] = {30};
-    vertex_id_t v_num = 10;
+    VertexID v_num = 10;
     std::vector<size_t> e_nums(e_nums_arr, e_nums_arr + 1);
     */
 
-    MPI_Bcast(&v_num, 1, get_mpi_data_type<vertex_id_t>(), 0, MPI_COMM_WORLD);
+    MPI_Bcast(&v_num, 1, kklib::deduce_mpi_data_type<VertexID>(), 0, MPI_COMM_WORLD);
 
     for (auto &e_num : e_nums_arr)
     {
@@ -312,7 +297,7 @@ void test_metapath()
         }
         MPI_Barrier(MPI_COMM_WORLD);
         int worker_number = rand() % 8 + 1;
-        MPI_Bcast(&worker_number, 1, get_mpi_data_type<int>(), 0, MPI_COMM_WORLD);
+        MPI_Bcast(&worker_number, 1, MPI_INT, 0, MPI_COMM_WORLD);
         test_metapath<edge_data_t>(v_num, worker_number);
     }
     if (get_mpi_rank() == 0)
@@ -333,7 +318,7 @@ TEST(Outlier, Biased)
 
 GTEST_API_ int main(int argc, char *argv[])
 {
-    MPI_Instance mpi_instance(&argc, &argv);
+    kklib::MPI_Instance mpi_instance(&argc, &argv);
     ::testing::InitGoogleTest(&argc, argv);
     mute_nonroot_gtest_events();
     int result = RUN_ALL_TESTS();

@@ -1,44 +1,21 @@
-/*
- * The MIT License (MIT)
- *
- * Copyright (c) 2019 Ke Yang, Tsinghua University 
- * 
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- */
-
-#include <stdio.h>
-#include <stdlib.h>
-
-#include <fstream>
-#include <vector>
-#include <utility>
-#include <queue>
-#include <type_traits>
-
 #include <gtest/gtest.h>
 
-#include "storage.hpp"
-#include "graph.hpp"
-#include "walk.hpp"
-#include "util.hpp"
 #include "test.hpp"
 #include "test_walk.hpp"
+
+#include <kklib/graph.hpp>
+#include <kklib/static_comp.hpp>
+#include <kklib/storage.hpp>
+#include <kklib/util.hpp>
+#include <kklib/walk.hpp>
+
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <queue>
+#include <type_traits>
+#include <utility>
+#include <vector>
 
 typedef int tag_t;
 const tag_t tag_num = 4;
@@ -48,7 +25,7 @@ struct TagWalkState
     tag_t tag;
     union
     {
-        vertex_id_t previous_vertex;
+        VertexID previous_vertex;
         tag_t previous_vertex_tag;
     };
 };
@@ -76,87 +53,103 @@ struct TagWalkConf
 {
     walker_id_t walker_num;
     step_t walk_length;
+    real_t outlier_amplifier;
     tag_t tag_num;
-    real_t vertex_tag_weight;
 };
-
-template<typename T>
-std::function<real_t(vertex_id_t, AdjUnit<T>*)> get_trivial_static_comp()
-{
-    printf("[error] Undefined trivial static component\n");
-    exit(1);
-}
-
-template<>
-std::function<real_t(vertex_id_t, AdjUnit<UnweightedTag>*)> get_trivial_static_comp<UnweightedTag>()
-{
-    return nullptr;
-}
-
-template<>
-std::function<real_t(vertex_id_t, AdjUnit<WeightedTag>*)> get_trivial_static_comp<WeightedTag>()
-{
-    auto static_comp = [&] (vertex_id_t v, AdjUnit<WeightedTag> *edge) {
-        return edge->data.weight;
-    };
-    return static_comp;
-}
 
 template<typename edge_data_t>
 void tagwalk(WalkEngine<edge_data_t, TagWalkState>* graph, TagWalkConf conf, tag_t* vertex_tag, int order)
 {
+    struct TagSet
+    {
+        AdjUnit<edge_data_t> *begin[tag_num];
+        AdjUnit<edge_data_t> *end[tag_num];
+    };
+    TagSet* adj_tags = graph->template alloc_vertex_array<TagSet>();
+    graph->template process_vertices<VertexID>(
+        [&](VertexID v_i)
+        {
+            std::sort(graph->csr->adj_lists[v_i].begin, graph->csr->adj_lists[v_i].end,
+                      [](const AdjUnit<edge_data_t> a, const AdjUnit<edge_data_t> b) { return a.data.tag < b.data.tag; });
+            for (tag_t c_i = 0; c_i < tag_num; c_i++)
+            {
+                adj_tags[v_i].begin[c_i] = nullptr;
+                adj_tags[v_i].end[c_i] = nullptr;
+            }
+            for (auto p = graph->csr->adj_lists[v_i].begin; p < graph->csr->adj_lists[v_i].end; p++)
+            {
+                tag_t c = p->data.tag;
+                if (adj_tags[v_i].begin[c] == nullptr)
+                {
+                    adj_tags[v_i].begin[c] = p;
+                }
+                adj_tags[v_i].end[c] = p + 1;
+            }
+            return 0;
+        });
+
     WalkerConfig<edge_data_t, TagWalkState> walker_conf(
         conf.walker_num,
-        [&] (Walker<TagWalkState> &walker, vertex_id_t start_vertex)
-        {
-            walker.data.tag = walker.id % tag_num;
-        },
-        [&] (Walker<TagWalkState> &walker, vertex_id_t current_v, AdjUnit<edge_data_t> *edge)
+        [&](Walker<TagWalkState>& walker, VertexID start_vertex) { walker.data.tag = walker.id % tag_num; },
+        [&](Walker<TagWalkState>& walker, VertexID current_v, AdjUnit<edge_data_t>* edge)
         {
             walker.data.tag = (walker.data.tag + 1) % tag_num;
             walker.data.previous_vertex = current_v;
-        }
-    );
-    auto extension_comp = [&] (Walker<TagWalkState> &walker, vertex_id_t current_v)
-    {
-        return walker.step >= conf.walk_length ? 0.0 : 1.0;
-    };
+        });
+    auto extension_comp = [&](Walker<TagWalkState>& walker, VertexID current_v)
+    { return walker.step >= conf.walk_length ? 0.0 : 1.0; };
     auto static_comp = get_trivial_static_comp<edge_data_t>();
-    auto upper_bound_func = [&] (vertex_id_t v_id, AdjList<edge_data_t> *adj_lists)
+    auto upper_bound_func = [&](VertexID v_id, AdjList<edge_data_t>* adj_lists) { return (real_t)tag_num; };
+    auto lower_bound_func = [&](VertexID v_id, AdjList<edge_data_t>* adj_lists) { return (real_t)1; };
+    auto outlier_upperbound_func = [&](Walker<TagWalkState>& walker, VertexID vertex, AdjList<edge_data_t>* adj_list,
+                                       real_t& prob_upperbound, VertexID& num_upperbound)
     {
-        return (real_t)tag_num + vertex_tag[v_id] * conf.vertex_tag_weight;
+        if (walker.step != 0)
+        {
+            auto begin = adj_tags[vertex].begin[walker.data.tag];
+            auto end = adj_tags[vertex].end[walker.data.tag];
+            prob_upperbound = 0;
+            num_upperbound = end - begin;
+            for (auto p = begin; p < end; p++)
+            {
+                prob_upperbound = std::max(prob_upperbound, tag_num * (conf.outlier_amplifier - 1) * p->data.get_weight());
+            }
+        }
+        else
+        {
+            prob_upperbound = 0;
+            num_upperbound = 0;
+        }
     };
-    auto lower_bound_func = [&] (vertex_id_t v_id, AdjList<edge_data_t> *adj_lists)
-    {
-        return (real_t)vertex_tag[v_id] * conf.vertex_tag_weight;
-    };
+    auto outlier_search_func = [&](Walker<TagWalkState>& walker, VertexID vertex, AdjList<edge_data_t>* adj_list, VertexID outlier_idx)
+    { return adj_tags[vertex].begin[walker.data.tag] + outlier_idx; };
     if (order == 1) 
     {
         TransitionConfig<edge_data_t, TagWalkState> tr_conf(
-            extension_comp,
-            static_comp,
-            [&] (Walker<TagWalkState>& walker, vertex_id_t vertex, AdjUnit<edge_data_t> *edge)
+            extension_comp, static_comp,
+            [&](Walker<TagWalkState>& walker, VertexID vertex, AdjUnit<edge_data_t>* edge)
             {
                 if (walker.step == 0)
                 {
                     return (real_t)tag_num;
-                } else
+                }
+                else
                 {
                     real_t temp = (real_t)1 + (vertex_tag[walker.data.previous_vertex] + walker.data.tag + edge->data.tag) % tag_num;
-                    temp += vertex_tag[vertex] * conf.vertex_tag_weight;
+                    if (walker.data.tag == edge->data.tag)
+                    {
+                        temp *= conf.outlier_amplifier;
+                    }
                     return temp;
                 }
             },
-            upper_bound_func,
-            lower_bound_func
-        );
+            upper_bound_func, lower_bound_func, outlier_upperbound_func, outlier_search_func);
         graph->random_walk(&walker_conf, &tr_conf);
     } else
     {
         SecondOrderTransitionConfig<edge_data_t, TagWalkState, EmptyData, tag_t> tr_conf(
-            extension_comp,
-            static_comp,
-            [&] (Walker<TagWalkState> &walker, walker_id_t walker_idx, vertex_id_t current_v, AdjUnit<edge_data_t> *edge)
+            extension_comp, static_comp,
+            [&](Walker<TagWalkState>& walker, walker_id_t walker_idx, VertexID current_v, AdjUnit<edge_data_t>* edge)
             {
                 if (walker.step != 0)
                 {
@@ -166,34 +159,43 @@ void tagwalk(WalkEngine<edge_data_t, TagWalkState>* graph, TagWalkConf conf, tag
                     graph->emit(walker.data.previous_vertex, query);
                 }
             },
-            [&] (vertex_id_t vtx, stateQuery<EmptyData> query, AdjList<edge_data_t>* adj_list)
+            [&](VertexID vtx, stateQuery<EmptyData> query, AdjList<edge_data_t>* adj_list)
             {
                 stateResponse<tag_t> response;
                 response.walker_idx = query.walker_idx;
                 response.data = vertex_tag[vtx];
                 graph->emit(query.src_v, response);
             },
-            [&] (Walker<TagWalkState> &walker, stateResponse<tag_t> &response, vertex_id_t current_v, AdjUnit<edge_data_t> *edge)
+            [&](Walker<TagWalkState>& walker, stateResponse<tag_t>& response, VertexID current_v, AdjUnit<edge_data_t>* edge)
             {
                 if (walker.step == 0)
                 {
                     return (real_t)tag_num;
-                } else
+                }
+                else
                 {
                     real_t temp = (real_t)1 + (response.data + walker.data.tag + edge->data.tag) % tag_num;
-                    temp += vertex_tag[current_v] * conf.vertex_tag_weight;
+                    if (walker.data.tag == edge->data.tag)
+                    {
+                        temp *= conf.outlier_amplifier;
+                    }
                     return temp;
                 }
             },
-            upper_bound_func,
-            lower_bound_func
-        );
+            upper_bound_func, lower_bound_func, outlier_upperbound_func, outlier_search_func);
         graph->random_walk(&walker_conf, &tr_conf);
     }
+
+    graph->dealloc_vertex_array(adj_tags);
 }
 
-template<typename edge_data_t>
-void check_tagwalk_random_walk(vertex_id_t v_num, Edge<edge_data_t> *edges, edge_id_t e_num, TagWalkConf conf, tag_t* vertex_tag, std::vector<std::vector<vertex_id_t> > &seq)
+template <typename edge_data_t>
+void check_tagwalk_random_walk(VertexID v_num,
+                               Edge<edge_data_t>* edges,
+                               edge_id_t e_num,
+                               TagWalkConf conf,
+                               tag_t* vertex_tag,
+                               std::vector<std::vector<VertexID>>& seq)
 {
     const size_t max_state_num = tag_num * tag_num;
     auto get_state_id = [&] (tag_t walker_tag, tag_t previous_vertex_tag)
@@ -209,7 +211,7 @@ void check_tagwalk_random_walk(vertex_id_t v_num, Edge<edge_data_t> *edges, edge
     {
         std::sort(adj.begin(), adj.end(), [](const Edge<edge_data_t> a, const Edge<edge_data_t> b){return a.dst < b.dst;});
     }
-    auto get_edge_idx = [&] (vertex_id_t src, vertex_id_t dst)
+    auto get_edge_idx = [&](VertexID src, VertexID dst)
     {
         Edge<edge_data_t> target;
         target.dst = dst;
@@ -219,7 +221,7 @@ void check_tagwalk_random_walk(vertex_id_t v_num, Edge<edge_data_t> *edges, edge
     };
     for (auto &s : seq)
     {
-        vertex_id_t start = s[0];
+        VertexID start = s[0];
         assert((graph[start].size() == 0 && s.size() == 1) || (s.size() == conf.walk_length + 1));
     }
     std::vector<std::vector<bool> > vis(v_num);
@@ -230,7 +232,7 @@ void check_tagwalk_random_walk(vertex_id_t v_num, Edge<edge_data_t> *edges, edge
     struct QueueItem
     {
         tag_t wk_tag;
-        vertex_id_t vertex;
+        VertexID vertex;
     };
     for (walker_id_t w_i = 0; w_i < seq.size(); w_i ++)
     {
@@ -264,7 +266,7 @@ void check_tagwalk_random_walk(vertex_id_t v_num, Edge<edge_data_t> *edges, edge
         }
     }
     std::vector<std::vector<std::vector<double> > > std_trans_mat(v_num);
-    for (vertex_id_t v_i = 0; v_i < v_num; v_i++)
+    for (VertexID v_i = 0; v_i < v_num; v_i++)
     {
         std_trans_mat[v_i].resize(max_state_num);
         for (tag_t walker_tag = 0; walker_tag < tag_num; walker_tag++)
@@ -282,7 +284,10 @@ void check_tagwalk_random_walk(vertex_id_t v_num, Edge<edge_data_t> *edges, edge
                 {
                     auto &edge = graph[v_i][e_i];
                     double val = (real_t)1 + (pv_tag + walker_tag + edge.data.tag) % tag_num;
-                    val += vertex_tag[v_i] * conf.vertex_tag_weight;
+                    if (walker_tag == edge.data.tag)
+                    {
+                        val *= conf.outlier_amplifier;
+                    }
                     val *= edge.data.get_weight();
                     dist[e_i] = val;
                 }
@@ -290,7 +295,7 @@ void check_tagwalk_random_walk(vertex_id_t v_num, Edge<edge_data_t> *edges, edge
         }
     }
     std::vector<std::vector<std::vector<double> > > real_trans_mat(v_num);
-    for (vertex_id_t v_i = 0; v_i < v_num; v_i++)
+    for (VertexID v_i = 0; v_i < v_num; v_i++)
     {
         real_trans_mat[v_i].resize(max_state_num);
         for (size_t s_i = 0; s_i < max_state_num; s_i++)
@@ -302,58 +307,12 @@ void check_tagwalk_random_walk(vertex_id_t v_num, Edge<edge_data_t> *edges, edge
     {
         for (step_t s_i = 1; s_i + 1 < seq[w_i].size(); s_i++)
         {
-            vertex_id_t current_v = seq[w_i][s_i];
+            VertexID current_v = seq[w_i][s_i];
             size_t state_id = get_state_id((w_i + s_i) % tag_num, vertex_tag[seq[w_i][s_i - 1]]);
             size_t edge_idx = get_edge_idx(seq[w_i][s_i], seq[w_i][s_i + 1]);
             real_trans_mat[current_v][state_id][edge_idx] += 1.0;
         }
     }
-    /*
-    for (vertex_id_t v_i = 0; v_i < v_num; v_i++)
-    {
-        printf("%u: ", v_i);
-        for (auto e : graph[v_i])
-        {
-            printf("(%u %d) ", e.dst, e.data.tag);
-        }
-        printf("\n");
-    }
-    for (vertex_id_t v_i = 0; v_i < v_num; v_i++)
-    {
-        for (tag_t walker_tag = 0; walker_tag < tag_num; walker_tag++)
-        {
-            for (tag_t pv_tag = 0; pv_tag < tag_num; pv_tag++)
-            {
-                size_t state = get_state_id(walker_tag, pv_tag);
-                if (!vis[v_i][state])
-                {
-                    continue;
-                }
-                printf("%u %d %d:\n", v_i, walker_tag, pv_tag);
-                double sum = 0;
-                for (auto x : std_trans_mat[v_i][state])
-                {
-                    sum += x;
-                }
-                for (auto x : std_trans_mat[v_i][state])
-                {
-                    printf("%lf ", x / sum);
-                }
-                printf("\n");
-                sum = 0;
-                for (auto x : real_trans_mat[v_i][state])
-                {
-                    sum += x;
-                }
-                for (auto x : real_trans_mat[v_i][state])
-                {
-                    printf("%lf ", x / sum);
-                }
-                printf("\n");
-            }
-        }
-    }
-    */
     auto get_flat_mat = [] (std::vector<std::vector<std::vector<double> > > &three_d_mat)
     {
         std::vector<std::vector<double> > two_d_mat;
@@ -373,33 +332,33 @@ void check_tagwalk_random_walk(vertex_id_t v_num, Edge<edge_data_t> *edges, edge
     cmp_trans_matrix(real_flat_mat, std_flat_mat);
 }
 
-template<typename edge_data_t>
-void test_bound(vertex_id_t v_num, int worker_number, int order)
+template <typename edge_data_t> void test_outlier(VertexID v_num, int worker_number, int order)
 {
-    WalkEngine<edge_data_t, TagWalkState> graph;
+    kklib::LoadedGraphData graph_data = kklib::load_graph<edge_data_t>(v_num, test_data_file);
+    WalkEngine<edge_data_t, TagWalkState> graph{ graph_data.v_num_param, graph_data.read_edges, graph_data.read_e_num };
     graph.set_concurrency(worker_number);
-    graph.load_graph(v_num, test_data_file);
 
     TagWalkConf conf;
     conf.walk_length = 80 + rand() % 20;
     conf.walker_num = graph.get_vertex_num() * 500 + graph.get_edge_num() * 500 + rand() % 100;
     conf.tag_num = 3 + rand() % 5;
-    conf.vertex_tag_weight = 1.0 / (1 + rand() % 3);
-    MPI_Bcast(&conf, sizeof(conf), get_mpi_data_type<char>(), 0, MPI_COMM_WORLD);
+    conf.outlier_amplifier = 1.0 + 5.0 / (rand() % 10 + 1);
+    MPI_Bcast(&conf, sizeof(conf), MPI_CHAR, 0, MPI_COMM_WORLD);
 
     tag_t* vertex_tag = graph.template alloc_vertex_array<tag_t>();
     if (get_mpi_rank() == 0)
     {
-        for (vertex_id_t v_i = 0; v_i < v_num; v_i++)
+        kklib::RandomEngine<tag_t> random_engine;
+        for (VertexID v_i = 0; v_i < v_num; v_i++)
         {
-            vertex_tag[v_i] = graph.get_thread_local_rand_gen()->gen(tag_num);
+            vertex_tag[v_i] = random_engine(0, tag_num - 1);
         }
     }
-    MPI_Bcast(vertex_tag, v_num, get_mpi_data_type<tag_t>(), 0, MPI_COMM_WORLD);
+    MPI_Bcast(vertex_tag, v_num, kklib::deduce_mpi_data_type<tag_t>(), 0, MPI_COMM_WORLD);
 
     tagwalk(&graph, conf, vertex_tag, order);
 
-    std::vector<std::vector<vertex_id_t> > rw_sequences;
+    std::vector<std::vector<VertexID>> rw_sequences;
     graph.collect_walk_sequence(rw_sequences, conf.walker_num);
 
     if (get_mpi_rank() == 0)
@@ -435,24 +394,26 @@ std::function<void(WeightedTag&)> get_tag_gen_func<WeightedTag>()
     auto func = [] (WeightedTag &data)
     {
         data.tag = rand() % tag_num;
-        gen_rand_edge_data<real_t>(data.weight);
+        kklib::RandomEngine<real_t> random_engine;
+        constexpr uint32_t range = 5;
+        data.weight = random_engine(0., range);
     };
     return func;
 }
 
 template<typename edge_data_t>
-void test_bound(int order)
+void test_outlier(int order)
 {
     edge_id_t e_nums_arr[] = {100, 200, 300, 400, 500, 600};
-    vertex_id_t v_num = 50 + rand() % 25;
+    VertexID v_num = 50 + rand() % 25;
     std::vector<edge_id_t> e_nums(e_nums_arr, e_nums_arr + 6);
     /*
     size_t e_nums_arr[] = {30};
-    vertex_id_t v_num = 10;
+    VertexID v_num = 10;
     std::vector<size_t> e_nums(e_nums_arr, e_nums_arr + 1);
     */
 
-    MPI_Bcast(&v_num, 1, get_mpi_data_type<vertex_id_t>(), 0, MPI_COMM_WORLD);
+    MPI_Bcast(&v_num, 1, kklib::deduce_mpi_data_type<VertexID>(), 0, MPI_COMM_WORLD);
 
     for (auto &e_num : e_nums_arr)
     {
@@ -462,8 +423,8 @@ void test_bound(int order)
         }
         MPI_Barrier(MPI_COMM_WORLD);
         int worker_number = rand() % 8 + 1;
-        MPI_Bcast(&worker_number, 1, get_mpi_data_type<int>(), 0, MPI_COMM_WORLD);
-        test_bound<edge_data_t>(v_num, worker_number, order);
+        MPI_Bcast(&worker_number, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        test_outlier<edge_data_t>(v_num, worker_number, order);
     }
     if (get_mpi_rank() == 0)
     {
@@ -471,30 +432,30 @@ void test_bound(int order)
     }
 }
 
-TEST(Bound, UnbiasedFirstOrder)
+TEST(Outlier, UnbiasedFirstOrder)
 {
-    test_bound<UnweightedTag>(1);
+    test_outlier<UnweightedTag>(1);
 }
 
-TEST(Bound, BiasedFirstOrder)
+TEST(Outlier, BiasedFirstOrder)
 {
-    test_bound<WeightedTag>(1);
+    test_outlier<WeightedTag>(1);
 }
 
-TEST(Bound, UnbiasedSecondOrder)
+TEST(Outlier, UnbiasedSecondOrder)
 {
-    test_bound<UnweightedTag>(2);
+    test_outlier<UnweightedTag>(2);
 }
 
-TEST(Bound, BiasedSecondOrder)
+TEST(Outlier, BiasedSecondOrder)
 {
-    test_bound<WeightedTag>(2);
+    test_outlier<WeightedTag>(2);
 }
 
 
 GTEST_API_ int main(int argc, char *argv[])
 {
-    MPI_Instance mpi_instance(&argc, &argv);
+    kklib::MPI_Instance mpi_instance(&argc, &argv);
     ::testing::InitGoogleTest(&argc, argv);
     mute_nonroot_gtest_events();
     int result = RUN_ALL_TESTS();

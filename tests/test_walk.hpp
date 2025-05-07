@@ -1,42 +1,20 @@
-/*
- * The MIT License (MIT)
- *
- * Copyright (c) 2019 Ke Yang, Tsinghua University 
- * 
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- */
+#pragma once
 
-#include <stdio.h>
-#include <stdlib.h>
+#include "test.hpp"
 
-#include <fstream>
-#include <vector>
-#include <utility>
-#include <map>
-#include <set>
-#include <type_traits>
+#include <kklib/storage.hpp>
+#include <kklib/util.hpp>
 
 #include <gtest/gtest.h>
 
-#include "storage.hpp"
-#include "util.hpp"
-#include "test.hpp"
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <map>
+#include <set>
+#include <type_traits>
+#include <utility>
+#include <vector>
 
 void print_mat(std::vector<std::vector<double> > &mat)
 {
@@ -127,15 +105,15 @@ double get_edge_trans_weight(Edge<float> &e)
     return e.data;
 }
 
-template<typename edge_data_t>
-void get_static_walk_trans_matrix(vertex_id_t v_num, Edge<edge_data_t> *edges, edge_id_t e_num, std::vector<std::vector<double> > &trans_mat)
+template <typename edge_data_t>
+void get_static_walk_trans_matrix(VertexID v_num, Edge<edge_data_t>* edges, edge_id_t e_num, std::vector<std::vector<double>>& trans_mat)
 {
     std::vector<double> weight_sum(v_num, 0.0);
     for (edge_id_t e_i = 0; e_i < e_num; e_i++)
     {
         weight_sum[edges[e_i].src] += get_edge_trans_weight(edges[e_i]);
     }
-    for (vertex_id_t v_i = 0; v_i < v_num; v_i++)
+    for (VertexID v_i = 0; v_i < v_num; v_i++)
     {
         if (weight_sum[v_i] == 0)
         {
@@ -149,8 +127,8 @@ void get_static_walk_trans_matrix(vertex_id_t v_num, Edge<edge_data_t> *edges, e
     }
 }
 
-template<typename edge_data_t>
-void check_static_random_walk(vertex_id_t v_num, Edge<edge_data_t> *edges, edge_id_t e_num, std::vector<std::vector<vertex_id_t> > rw_sequences)
+template <typename edge_data_t>
+void check_static_random_walk(VertexID v_num, Edge<edge_data_t>* edges, edge_id_t e_num, std::vector<std::vector<VertexID>> rw_sequences)
 {
     std::vector<std::vector<double> > trans_mat(v_num);
     for (auto &vec : trans_mat)

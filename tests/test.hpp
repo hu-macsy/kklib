@@ -1,63 +1,41 @@
-/*
- * The MIT License (MIT)
- *
- * Copyright (c) 2019 Ke Yang, Tsinghua University 
- * 
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- */
-
 #pragma once
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <assert.h>
-
-#include <fstream>
-#include <vector>
-#include <utility>
-#include <map>
-#include <set>
-#include <type_traits>
+#include <kklib/graph.hpp>
+#include <kklib/mpi_helper.hpp>
+#include <kklib/storage.hpp>
 
 #include <gtest/gtest.h>
 
-#include "storage.hpp"
-#include "generator_helper.hpp"
-#include "mpi_helper.hpp"
-#include "graph.hpp"
+#include <cassert>
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <map>
+#include <set>
+#include <type_traits>
+#include <utility>
+#include <vector>
 
 //temporary file for holding randomly generated graph
 //which is used for unit test
 const char *test_data_file = "746123_embedding_test_temp_data";
 
-template<typename edge_data_t>
-void gen_undirected_graph_file(vertex_id_t v_num, edge_id_t e_num, std::vector<Edge<edge_data_t> > &glb_edges, std::function<void(edge_data_t&)> edge_data_gen_func = nullptr, GraphFormat gf = GF_Binary)
+template <typename EdgeData>
+void gen_undirected_graph_file(VertexID v_num,
+                               edge_id_t e_num,
+                               std::vector<Edge<EdgeData>>& glb_edges,
+                               std::function<void(EdgeData&)> edge_data_gen_func = nullptr,
+                               GraphFormat gf = GF_Binary)
 {
     //bi-directional edge
     assert(e_num % 2 == 0);
-    std::set< std::pair<vertex_id_t, vertex_id_t> > filter;
+    std::set<std::pair<VertexID, VertexID>> filter;
     glb_edges.clear();
     for (edge_id_t i = 0; i < e_num / 2; i++)
     {
         bool ok = false;
-        vertex_id_t s;
-        vertex_id_t t;
+        VertexID s;
+        VertexID t;
         while (!ok)
         {
             s = rand() % v_num;
@@ -70,7 +48,7 @@ void gen_undirected_graph_file(vertex_id_t v_num, edge_id_t e_num, std::vector<E
                 ok = true;
             }
         }
-        Edge<edge_data_t> e;
+        Edge<EdgeData> e;
         e.src = s;
         e.dst = t;
         if (edge_data_gen_func != nullptr)
@@ -78,7 +56,12 @@ void gen_undirected_graph_file(vertex_id_t v_num, edge_id_t e_num, std::vector<E
             edge_data_gen_func(e.data);
         } else
         {
-            gen_rand_edge_data<edge_data_t>(e.data);
+            if constexpr (std::is_same<EdgeData, real_t>())
+            {
+                kklib::RandomEngine<EdgeData> random_engine;
+                constexpr uint32_t range = 5;
+                e.data = random_engine(0., range);
+            }
         }
         glb_edges.push_back(e);
         std::swap(e.src, e.dst);
@@ -98,23 +81,30 @@ void gen_undirected_graph_file(vertex_id_t v_num, edge_id_t e_num, std::vector<E
     }
 }
 
-template<typename edge_data_t>
-void gen_undirected_graph_file(vertex_id_t v_num, edge_id_t e_num, std::function<void(edge_data_t&)> edge_data_gen_func = nullptr, GraphFormat gf = GF_Binary)
+template <typename edge_data_t>
+void gen_undirected_graph_file(VertexID v_num,
+                               edge_id_t e_num,
+                               std::function<void(edge_data_t&)> edge_data_gen_func = nullptr,
+                               GraphFormat gf = GF_Binary)
 {
     std::vector<Edge<edge_data_t> > es;
     gen_undirected_graph_file(v_num, e_num, es, edge_data_gen_func, gf);
 }
 
-template<typename edge_data_t>
-void gen_directed_graph_file(vertex_id_t v_num, edge_id_t e_num, std::vector<Edge<edge_data_t> > &glb_edges, std::function<void(edge_data_t&)> edge_data_gen_func = nullptr, GraphFormat gf = GF_Binary)
+template <typename EdgeData>
+void gen_directed_graph_file(VertexID v_num,
+                             edge_id_t e_num,
+                             std::vector<Edge<EdgeData>>& glb_edges,
+                             std::function<void(EdgeData&)> edge_data_gen_func = nullptr,
+                             GraphFormat gf = GF_Binary)
 {
-    std::set< std::pair<vertex_id_t, vertex_id_t> > filter;
+    std::set<std::pair<VertexID, VertexID>> filter;
     glb_edges.clear();
     for (edge_id_t i = 0; i < e_num; i++)
     {
         bool ok = false;
-        vertex_id_t s;
-        vertex_id_t t;
+        VertexID s;
+        VertexID t;
         while (!ok)
         {
             s = rand() % v_num;
@@ -126,7 +116,7 @@ void gen_directed_graph_file(vertex_id_t v_num, edge_id_t e_num, std::vector<Edg
                 ok = true;
             }
         }
-        Edge<edge_data_t> e;
+        Edge<EdgeData> e;
         e.src = s;
         e.dst = t;
         if (edge_data_gen_func != nullptr)
@@ -134,7 +124,12 @@ void gen_directed_graph_file(vertex_id_t v_num, edge_id_t e_num, std::vector<Edg
             edge_data_gen_func(e.data);
         } else
         {
-            gen_rand_edge_data<edge_data_t>(e.data);
+            if constexpr (std::is_same<EdgeData, real_t>())
+            {
+                kklib::RandomEngine<EdgeData> random_engine;
+                constexpr uint32_t range = 5;
+                e.data = random_engine(0., range);
+            }
         }
         glb_edges.push_back(e);
     }
@@ -152,8 +147,8 @@ void gen_directed_graph_file(vertex_id_t v_num, edge_id_t e_num, std::vector<Edg
     }
 }
 
-template<typename edge_data_t>
-void gen_directed_graph_file(vertex_id_t v_num, edge_id_t e_num, std::function<void(edge_data_t&)> edge_data_gen_func = nullptr, GraphFormat gf = GF_Binary)
+template <typename edge_data_t>
+void gen_directed_graph_file(VertexID v_num, edge_id_t e_num, std::function<void(edge_data_t&)> edge_data_gen_func = nullptr, GraphFormat gf = GF_Binary)
 {
     std::vector<Edge<edge_data_t> > es;
     gen_directed_graph_file(v_num, e_num, es, edge_data_gen_func, gf);
