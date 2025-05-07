@@ -47,10 +47,6 @@ target_link_libraries(kklib PRIVATE OpenMP::OpenMP_CXX)
 find_package(TBB REQUIRED)
 target_link_libraries(kklib PRIVATE TBB::tbb)
 
-# dhb
-find_package(dhb REQUIRED)
-target_link_libraries(kklib PRIVATE dhb::dhb)
-
 target_include_directories(kklib
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src

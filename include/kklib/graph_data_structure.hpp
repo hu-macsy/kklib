@@ -2,8 +2,6 @@
 
 #include <kklib/type.hpp>
 
-#include <dhb/dynamic_hashed_blocks.h>
-
 #include <algorithm>
 
 struct EmptyData
@@ -152,46 +150,7 @@ EdgeContainer<EdgeDataT>* build_edge_container(Edge<EdgeDataT> const* const edge
 
 namespace kklib
 {
-struct HighDegreeVertex
-{
-    VertexID id;
-    VertexID degree;
-    partition_id_t owner;
-};
 
 using EdgeNoData = Edge<EmptyData>;
-
-template <typename edge_data_t> using DHBEdge = typename dhb::BlockState<edge_data_t>::Entry;
-template <typename edge_data_t> using DHBEdgeConstProxy = typename dhb::BlockState<edge_data_t>::const_proxy;
-template <typename edge_data_t> using DHBEdgeProxy = typename dhb::BlockState<edge_data_t>::proxy;
-template <typename edge_data_t> using DHBConstNeighborhood = typename dhb::Matrix<edge_data_t>::ConstNeighborView;
-template <typename edge_data_t> using DHBNeighborhood = typename dhb::Matrix<edge_data_t>::NeighborView;
-
-template <typename EdgeDataT>
-dhb::Matrix<EdgeDataT> build_matrix(Edge<EdgeDataT> const* const edges, edge_id_t local_edge_num, VertexID const v_num)
-{
-    dhb::Matrix<EdgeDataT> graph(v_num);
-
-    for (edge_id_t e_i = 0; e_i < local_edge_num; e_i++)
-    {
-        Edge<EdgeDataT> const& e = edges[e_i];
-        graph.insert(e.src, e.dst, e.data, true);
-    }
-
-    return graph;
-}
-
-dhb::Matrix<EmptyData> build_matrix(Edge<EmptyData> const* const edges, edge_id_t local_edge_num, VertexID const v_num)
-{
-    dhb::Matrix<EmptyData> graph(v_num);
-
-    for (edge_id_t e_i = 0; e_i < local_edge_num; e_i++)
-    {
-        Edge<EmptyData> const& e = edges[e_i];
-        graph.insert(e.src, e.dst, EmptyData{}, true);
-    }
-
-    return graph;
-}
 
 } // namespace kklib
