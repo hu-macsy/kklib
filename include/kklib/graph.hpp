@@ -1,28 +1,12 @@
-/*
- * The MIT License (MIT)
- *
- * Copyright (c) 2019 Ke Yang, Tsinghua University 
- * 
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- */
-
 #pragma once
+
+#include <kklib/constants.hpp>
+#include <kklib/graph_data_structure.hpp>
+#include <kklib/mpi_helper.hpp>
+#include <kklib/type.hpp>
+#include <kklib/util.hpp>
+
+#include <omp.h>
 
 #include <string>
 #include <vector>
@@ -38,105 +22,17 @@
 #include <sys/mman.h>
 #include <limits.h>
 
-#include <omp.h>
-
-#include "type.hpp"
-#include "util.hpp"
-#include "constants.hpp"
-#include "storage.hpp"
-#include "mpi_helper.hpp"
-
-template<typename edge_data_t>
-struct AdjUnit
-{
-    vertex_id_t neighbour;
-    edge_data_t data;
-};
-
-template<>
-struct AdjUnit<EmptyData>
-{
-    union
-    {
-        vertex_id_t neighbour;
-        EmptyData data;
-    };
-};
-
-template<typename edge_data_t>
-struct AdjList
-{
-    AdjUnit<edge_data_t> *begin;
-    AdjUnit<edge_data_t> *end;
-    void init()
-    {
-        begin = nullptr;
-        end = nullptr;
-    }
-};
-
-//comprised column row
-template<typename edge_data_t>
-struct EdgeContainer
-{
-    AdjList<edge_data_t> *adj_lists;
-    AdjUnit<edge_data_t> *adj_units;
-    EdgeContainer() : adj_lists(nullptr), adj_units(nullptr) {}
-    ~EdgeContainer()
-    {
-        if (adj_lists != nullptr)
-        {
-            delete []adj_lists;
-        }
-        if (adj_units != nullptr)
-        {
-            delete []adj_units;
-        }
-    }
-};
-
-enum MPIMessageTag {
-    Tag_ShuffleGraph,
-    Tag_Msg
-};
-
-template<typename T>
-class Message
-{
-public:
-    vertex_id_t dst_vertex_id;
-    T data;
-};
-
-struct DistributedExecutionCtx
-{
-    std::mutex phase_locks[DISTRIBUTEDEXECUTIONCTX_PHASENUM];
-    int unlocked_phase;
-    size_t **progress;
-public:
-    DistributedExecutionCtx()
-    {
-        progress = nullptr;
-    }
-};
-
-enum GraphFormat
-{
-    GF_Binary,
-    GF_Edgelist
-};
-
 template<typename edge_data_t>
 class GraphEngine
 {
-protected: 
-    vertex_id_t v_num;
+protected:
+    VertexID v_num;
     edge_id_t e_num;
     int worker_num;
     edge_id_t local_e_num;
 
-    vertex_id_t *vertex_partition_begin;
-    vertex_id_t *vertex_partition_end;
+    VertexID* vertex_partition_begin;
+    VertexID* vertex_partition_end;
 
     partition_id_t local_partition_id;
     partition_id_t partition_num;
@@ -149,8 +45,8 @@ protected:
 
     DistributedExecutionCtx dist_exec_ctx;
 public:
-    vertex_id_t *vertex_in_degree;
-    vertex_id_t *vertex_out_degree;
+    VertexID* vertex_in_degree;
+    VertexID* vertex_out_degree;
     partition_id_t *vertex_partition_id;
 
     EdgeContainer<edge_data_t> *csr;
@@ -166,7 +62,7 @@ protected:
     }
 
 public:
-    inline bool is_local_vertex(vertex_id_t v_id)
+    inline bool is_local_vertex(VertexID v_id)
     {
         return v_id >= vertex_partition_begin[local_partition_id]
             && v_id < vertex_partition_end[local_partition_id];
@@ -175,10 +71,7 @@ public:
     {
         return e.src < v_num && e.dst < v_num;
     }
-    inline vertex_id_t get_vertex_num()
-    {
-        return v_num;
-    }
+    inline VertexID get_vertex_num() { return v_num; }
     inline edge_id_t get_edge_num()
     {
         return e_num;
@@ -187,22 +80,10 @@ public:
     {
         return worker_num;
     }
-    inline vertex_id_t get_local_vertex_begin()
-    {
-        return vertex_partition_begin[local_partition_id];
-    }
-    inline vertex_id_t get_local_vertex_end()
-    {
-        return vertex_partition_end[local_partition_id];
-    }
-    inline vertex_id_t get_vertex_begin(partition_id_t p)
-    {
-        return vertex_partition_begin[p];
-    }
-    inline vertex_id_t get_vertex_end(partition_id_t p)
-    {
-        return vertex_partition_end[p];
-    }
+    inline VertexID get_local_vertex_begin() { return vertex_partition_begin[local_partition_id]; }
+    inline VertexID get_local_vertex_end() { return vertex_partition_end[local_partition_id]; }
+    inline VertexID get_vertex_begin(partition_id_t p) { return vertex_partition_begin[p]; }
+    inline VertexID get_vertex_end(partition_id_t p) { return vertex_partition_end[p]; }
 
 public:
     // deallocate a vertex array
@@ -256,6 +137,114 @@ public:
         omp_set_num_threads(worker_num);
     }
 
+    GraphEngine(VertexID _v_num,
+                Edge<edge_data_t>* read_edges,
+                edge_id_t read_e_num,
+                partition_id_t const _partition_num = get_mpi_size(),
+                partition_id_t const _local_partition_id = get_mpi_rank())
+    : GraphEngine()
+    {
+        v_num = _v_num;
+        partition_num = _partition_num;
+        local_partition_id = _local_partition_id;
+        local_e_num = 0;
+
+        vertex_in_degree = alloc_vertex_array<VertexID>();
+        vertex_out_degree = alloc_vertex_array<VertexID>();
+
+        std::vector<VertexID> local_vertex_degree(v_num, 0);
+        for (edge_id_t e_i = 0; e_i < read_e_num; e_i++)
+        {
+            local_vertex_degree[read_edges[e_i].src]++;
+        }
+
+        MPI_Allreduce(local_vertex_degree.data(), vertex_out_degree, v_num, kklib::deduce_mpi_data_type<VertexID>(),
+                      MPI_SUM, MPI_COMM_WORLD);
+
+        std::fill(local_vertex_degree.begin(), local_vertex_degree.end(), 0);
+        for (edge_id_t e_i = 0; e_i < read_e_num; e_i++)
+        {
+            local_vertex_degree[read_edges[e_i].dst]++;
+        }
+        MPI_Allreduce(local_vertex_degree.data(), vertex_in_degree, v_num, kklib::deduce_mpi_data_type<VertexID>(),
+                      MPI_SUM, MPI_COMM_WORLD);
+
+        vertex_partition_begin = new VertexID[partition_num];
+        vertex_partition_end = new VertexID[partition_num];
+
+        edge_id_t total_workload = 0;
+        e_num = 0;
+        for (VertexID v_i = 0; v_i < v_num; v_i++)
+        {
+            total_workload += 5 + vertex_out_degree[v_i];
+            e_num += vertex_out_degree[v_i];
+        }
+        edge_id_t workload_per_node = (total_workload + partition_num - 1) / partition_num;
+        for (partition_id_t p_i = 0; p_i < partition_num; p_i++)
+        {
+            if (p_i == 0)
+            {
+                vertex_partition_begin[p_i] = 0;
+            }
+            else
+            {
+                vertex_partition_begin[p_i] = vertex_partition_end[p_i - 1];
+            }
+            vertex_partition_end[p_i] = vertex_partition_begin[p_i];
+            edge_id_t workload = 0;
+            for (VertexID v_i = vertex_partition_begin[p_i]; v_i < v_num && workload < workload_per_node; v_i++)
+            {
+                workload += 5 + vertex_out_degree[v_i];
+                vertex_partition_end[p_i]++;
+            }
+#ifdef PERF_PROF
+            if (local_partition_id == 0)
+            {
+                printf("partition %d: %u %u (%zu %zu)\n", p_i, vertex_partition_begin[p_i], vertex_partition_end[p_i],
+                       workload, workload_per_node);
+            }
+#endif
+        }
+        assert(vertex_partition_end[partition_num - 1] == v_num);
+
+        vertex_partition_id = alloc_vertex_array<partition_id_t>();
+        for (partition_id_t p_i = 0; p_i < partition_num; p_i++)
+        {
+            for (VertexID v_i = vertex_partition_begin[p_i]; v_i < vertex_partition_end[p_i]; v_i++)
+            {
+                vertex_partition_id[v_i] = p_i;
+            }
+        }
+
+        for (VertexID v_i = vertex_partition_begin[local_partition_id]; v_i < vertex_partition_end[local_partition_id]; v_i++)
+        {
+            local_e_num += vertex_out_degree[v_i];
+        }
+        Edge<edge_data_t>* local_edges = new Edge<edge_data_t>[local_e_num];
+
+        //! Shuffle edges to remove any pattern when reading in file.
+        shuffle_edges(read_edges, read_e_num, local_edges, local_e_num);
+
+        csr = build_edge_container(local_edges, local_e_num, vertex_out_degree, v_num, local_partition_id,
+                                   vertex_partition_begin, vertex_partition_end);
+
+        send_locks = new std::mutex[partition_num];
+        recv_locks = new std::mutex[partition_num];
+
+        dist_exec_ctx.progress = new size_t*[worker_num];
+        for (partition_id_t t_i = 0; t_i < worker_num; t_i++)
+        {
+            dist_exec_ctx.progress[t_i] = new size_t[partition_num];
+        }
+
+#ifdef PERF_PROF
+        printf("finish build graph, time %.3lfs\n", timer.duration());
+#endif
+        //! Handle this deletion differently.
+        delete[] read_edges;
+        delete[] local_edges;
+    }
+
     virtual ~GraphEngine()
     {
         if (vertex_partition_begin != nullptr)
@@ -278,11 +267,11 @@ public:
 
         if (vertex_in_degree != nullptr)
         {
-            dealloc_vertex_array<vertex_id_t>(vertex_in_degree);
+            dealloc_vertex_array<VertexID>(vertex_in_degree);
         }
         if (vertex_out_degree != nullptr)
         {
-            dealloc_vertex_array<vertex_id_t>(vertex_out_degree);
+            dealloc_vertex_array<VertexID>(vertex_out_degree);
         }
         if (vertex_partition_id != nullptr)
         {
@@ -304,29 +293,6 @@ public:
         }
 
         free_msg_buffer();
-    }
-
-    void build_edge_container(Edge<edge_data_t> *edges, edge_id_t local_edge_num, EdgeContainer<edge_data_t> *ec, vertex_id_t* vertex_out_degree)
-    {
-        ec->adj_lists = new AdjList<edge_data_t>[v_num];
-        ec->adj_units = new AdjUnit<edge_data_t>[local_edge_num];
-        edge_id_t chunk_edge_idx = 0;
-        for (vertex_id_t v_i = vertex_partition_begin[local_partition_id]; v_i < vertex_partition_end[local_partition_id]; v_i++)
-        {
-            ec->adj_lists[v_i].begin = ec->adj_units + chunk_edge_idx;
-            ec->adj_lists[v_i].end = ec->adj_lists[v_i].begin;
-            chunk_edge_idx += vertex_out_degree[v_i];
-        }
-        for (edge_id_t e_i = 0; e_i < local_edge_num; e_i++)
-        {
-            auto e = edges[e_i];
-            auto ep = ec->adj_lists[e.src].end ++;
-            ep->neighbour = e.dst;
-            if (!std::is_same<edge_data_t, EmptyData>::value)
-            {
-                ep->data = e.data;
-            }
-        }
     }
 
     void shuffle_edges(Edge<edge_data_t> *misc_edges, edge_id_t misc_e_num, Edge<edge_data_t> *local_edges, edge_id_t local_e_num)
@@ -362,14 +328,14 @@ public:
                 void* send_data = tmp_es + e_begin[dst];
                 while (true)
                 {
-                    MPI_Send(&tot_send_sz, 1, get_mpi_data_type<size_t>(), dst, Tag_ShuffleGraph, MPI_COMM_WORLD);
+                    MPI_Send(&tot_send_sz, 1, kklib::deduce_mpi_data_type<size_t>(), dst, Tag_ShuffleGraph, MPI_COMM_WORLD);
                     if (tot_send_sz == 0)
                     {
                         break;
                     }
                     int send_sz = std::min((size_t)max_single_send_sz, tot_send_sz);
                     tot_send_sz -= send_sz;
-                    MPI_Send(send_data, send_sz, get_mpi_data_type<char>(), dst, Tag_ShuffleGraph, MPI_COMM_WORLD);
+                    MPI_Send(send_data, send_sz, MPI_CHAR, dst, Tag_ShuffleGraph, MPI_COMM_WORLD);
                     send_data = (char*)send_data + send_sz;
                 }
                 usleep(100000);
@@ -382,7 +348,8 @@ public:
                 while (true)
                 {
                     size_t remained_sz;
-                    MPI_Recv(&remained_sz, 1, get_mpi_data_type<size_t>(), src, Tag_ShuffleGraph, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                    MPI_Recv(&remained_sz, 1, kklib::deduce_mpi_data_type<size_t>(), src, Tag_ShuffleGraph,
+                             MPI_COMM_WORLD, MPI_STATUS_IGNORE);
                     if (remained_sz == 0)
                     {
                         break;
@@ -391,9 +358,9 @@ public:
                     MPI_Status recv_status;
                     MPI_Probe(src, Tag_ShuffleGraph, MPI_COMM_WORLD, &recv_status);
                     int sz;
-                    MPI_Get_count(&recv_status, get_mpi_data_type<char>(), &sz);
+                    MPI_Get_count(&recv_status, MPI_CHAR, &sz);
 
-                    MPI_Recv(local_edges + local_edge_p, sz, get_mpi_data_type<char>(), src, Tag_ShuffleGraph, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                    MPI_Recv(local_edges + local_edge_p, sz, MPI_CHAR, src, Tag_ShuffleGraph, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
                     local_edge_p += sz / sizeof(Edge<edge_data_t>);
                 }
                 usleep(100000);
@@ -403,130 +370,6 @@ public:
         recv_thread.join();
         delete []tmp_es;
         assert(local_e_num == local_edge_p);
-    }
-
-    void load_graph(vertex_id_t v_num_param, const char* graph_path, bool load_as_undirected = false, GraphFormat graph_format = GF_Binary)
-    {
-        Timer timer;
-
-        this->v_num = v_num_param;
-        this->partition_num = get_mpi_size();
-        this->local_partition_id = get_mpi_rank();
-        this->local_e_num = 0;
-
-        Edge<edge_data_t> *read_edges;
-        edge_id_t read_e_num;
-        if (graph_format == GF_Binary)
-        {
-            read_graph(graph_path, local_partition_id, partition_num, read_edges, read_e_num);
-        } else if (graph_format == GF_Edgelist)
-        {
-            read_edgelist(graph_path, local_partition_id, partition_num, read_edges, read_e_num);
-        } else
-        {
-            fprintf(stderr, "Unsupported graph formant");
-            exit(1);
-        }
-        if (load_as_undirected)
-        {
-            Edge<edge_data_t> *undirected_edges = new Edge<edge_data_t>[read_e_num * 2];
-#pragma omp parallel for
-            for (edge_id_t e_i = 0; e_i < read_e_num; e_i++)
-            {
-                undirected_edges[e_i * 2] = read_edges[e_i];
-                std::swap(read_edges[e_i].src, read_edges[e_i].dst);
-                undirected_edges[e_i * 2 + 1] = read_edges[e_i];
-            }
-            delete []read_edges;
-            read_edges = undirected_edges;
-            read_e_num *= 2;
-        }
-
-        this->vertex_out_degree = alloc_vertex_array<vertex_id_t>();
-        this->vertex_in_degree = alloc_vertex_array<vertex_id_t>();
-        std::vector<vertex_id_t> local_vertex_degree(v_num, 0);
-        for (edge_id_t e_i = 0; e_i < read_e_num; e_i++) 
-        {
-            local_vertex_degree[read_edges[e_i].src]++;
-        }
-        MPI_Allreduce(local_vertex_degree.data(),  vertex_out_degree, v_num, get_mpi_data_type<vertex_id_t>(), MPI_SUM, MPI_COMM_WORLD);
-
-        std::fill(local_vertex_degree.begin(), local_vertex_degree.end(), 0);
-        for (edge_id_t e_i = 0; e_i < read_e_num; e_i++) 
-        {
-            local_vertex_degree[read_edges[e_i].dst] ++;
-        }
-        MPI_Allreduce(local_vertex_degree.data(),  vertex_in_degree, v_num, get_mpi_data_type<vertex_id_t>(), MPI_SUM, MPI_COMM_WORLD);
-
-        vertex_partition_begin = new vertex_id_t[partition_num];
-        vertex_partition_end = new vertex_id_t[partition_num];
-        edge_id_t total_workload = 0;
-        e_num = 0;
-        for (vertex_id_t v_i = 0; v_i < v_num; v_i++)
-        {
-            total_workload += 5 + vertex_out_degree[v_i];
-            e_num += vertex_out_degree[v_i];
-        }
-        edge_id_t workload_per_node = (total_workload + partition_num - 1) / partition_num;
-        for (partition_id_t p_i = 0; p_i < partition_num; p_i++)
-        {
-            if (p_i == 0)
-            {
-                vertex_partition_begin[p_i] = 0;
-            } else
-            {
-                vertex_partition_begin[p_i] = vertex_partition_end[p_i - 1];
-            }
-            vertex_partition_end[p_i] = vertex_partition_begin[p_i];
-            edge_id_t workload = 0;
-            for (vertex_id_t v_i = vertex_partition_begin[p_i]; v_i < v_num && workload < workload_per_node; v_i++)
-            {
-                workload += 5 + vertex_out_degree[v_i];
-                vertex_partition_end[p_i]++;
-            }
-#ifdef PERF_PROF
-            if (local_partition_id == 0)
-            {
-                printf("partition %d: %u %u (%zu %zu)\n", p_i, vertex_partition_begin[p_i], vertex_partition_end[p_i], workload, workload_per_node);
-            }
-#endif
-        }
-        assert(vertex_partition_end[partition_num - 1] == v_num);
-
-        vertex_partition_id = alloc_vertex_array<partition_id_t>();
-        for (partition_id_t p_i = 0; p_i < partition_num; p_i++)
-        {
-            for (vertex_id_t v_i = vertex_partition_begin[p_i]; v_i < vertex_partition_end[p_i]; v_i++)
-            {
-                vertex_partition_id[v_i] = p_i;
-            }
-        }
-
-        local_e_num = 0;
-        for (vertex_id_t v_i = vertex_partition_begin[local_partition_id]; v_i < vertex_partition_end[local_partition_id]; v_i++)
-        {
-            local_e_num += vertex_out_degree[v_i];
-        }
-        Edge<edge_data_t> *local_edges = new Edge<edge_data_t>[local_e_num];
-
-        shuffle_edges(read_edges, read_e_num, local_edges, local_e_num);
-        csr = new EdgeContainer<edge_data_t>();
-        build_edge_container(local_edges, local_e_num, csr, vertex_out_degree);
-        delete []read_edges;
-        delete []local_edges;
-
-        send_locks = new std::mutex[partition_num];
-        recv_locks = new std::mutex[partition_num];
-
-        dist_exec_ctx.progress = new size_t*[worker_num];
-        for (partition_id_t t_i = 0; t_i < worker_num; t_i++)
-        {
-            dist_exec_ctx.progress[t_i] = new size_t[partition_num];
-        }
-
-#ifdef PERF_PROF
-        printf("finish build graph, time %.3lfs\n", timer.duration());
-#endif
     }
 
     void set_msg_buffer(size_t max_msg_num, size_t max_msg_size)
@@ -557,8 +400,8 @@ public:
             }
         }
 
-        size_t local_buf_size = max_msg_size * THREAD_LOCAL_BUF_CAPACITY;
-        #pragma omp parallel
+        size_t local_buf_size = max_msg_size * kklib::thread_local_buf_capacity;
+#pragma omp parallel
         {
             int worker_id = omp_get_thread_num();
             if (thread_local_msg_buffer[worker_id]->sz < local_buf_size)
@@ -608,8 +451,7 @@ public:
         }
     }
 
-    template<typename msg_data_t>
-    void emit(vertex_id_t dst_id, msg_data_t data, int worker_id)
+    template <typename msg_data_t> void emit(VertexID dst_id, msg_data_t data, int worker_id)
     {
         typedef Message<msg_data_t> msg_t;
         msg_t* buf_data = (msg_t*)thread_local_msg_buffer[worker_id]->data;
@@ -621,15 +463,14 @@ public:
         thread_local_msg_buffer[worker_id]->self_check<msg_t>();
         assert(dst_id < v_num);
 #endif
-        if (count == THREAD_LOCAL_BUF_CAPACITY)
+        if (count == kklib::thread_local_buf_capacity)
         {
             flush_thread_local_msg_buffer<msg_t>(worker_id);
         }
     }
 
 
-    template<typename msg_data_t>
-    void emit(vertex_id_t dst_id, msg_data_t data)
+    template <typename msg_data_t> void emit(VertexID dst_id, msg_data_t data)
     {
         emit(dst_id, data, omp_get_thread_num());
     }
@@ -642,9 +483,9 @@ public:
         auto &local_msg_count = local_buf->count;
         if (local_msg_count != 0)
         {
-            vertex_id_t dst_count[partition_num];
+            VertexID dst_count[partition_num];
             std::fill(dst_count, dst_count + partition_num, 0);
-            for (vertex_id_t m_i = 0; m_i < local_msg_count; m_i++)
+            for (VertexID m_i = 0; m_i < local_msg_count; m_i++)
             {
                 dst_count[vertex_partition_id[local_data[m_i].dst_vertex_id]] ++;
             }
@@ -652,14 +493,14 @@ public:
             size_t end_data_pos[partition_num];
             for (partition_id_t p_i = 0; p_i < partition_num; p_i++)
             {
-                vertex_id_t start_pos = __sync_fetch_and_add(&msg_send_buffer[p_i]->count, dst_count[p_i]);
+                VertexID start_pos = __sync_fetch_and_add(&msg_send_buffer[p_i]->count, dst_count[p_i]);
 #ifdef UNIT_TEST
                 msg_send_buffer[p_i]->self_check<msg_t>();
 #endif
                 dst_data_pos[p_i] = (msg_t*)(msg_send_buffer[p_i]->data) + start_pos;
                 end_data_pos[p_i] = start_pos + dst_count[p_i];
             }
-            for (vertex_id_t m_i = 0; m_i < local_msg_count; m_i++)
+            for (VertexID m_i = 0; m_i < local_msg_count; m_i++)
             {
                 *(dst_data_pos[vertex_partition_id[local_data[m_i].dst_vertex_id]]++) =  local_data[m_i];
             }
@@ -671,12 +512,12 @@ public:
         }
     }
 
-    void notify_progress(vertex_id_t progress_begin, vertex_id_t progress_end, vertex_id_t workload, bool phased_exec)
+    void notify_progress(VertexID progress_begin, VertexID progress_end, VertexID workload, bool phased_exec)
     {
-        int phase_num = phased_exec ? DISTRIBUTEDEXECUTIONCTX_PHASENUM : 1;
+        int phase_num = phased_exec ? kklib::distributed_execution_ctx_phasenum : 1;
         if (phase_num > 1)
         {
-            vertex_id_t work_per_phase = workload / phase_num + 1;
+            VertexID work_per_phase = workload / phase_num + 1;
             int phase_begin = 0;
             while (progress_begin >= work_per_phase)
             {
@@ -712,7 +553,7 @@ public:
         typedef Message<msg_data_t> msg_t;
         Timer timer;
 
-        int phase_num = phased_exec ? DISTRIBUTEDEXECUTIONCTX_PHASENUM : 1;
+        int phase_num = phased_exec ? kklib::distributed_execution_ctx_phasenum : 1;
         for (int phase_i = 0; phase_i < phase_num; phase_i++)
         {
             dist_exec_ctx.phase_locks[phase_i].lock();
@@ -741,18 +582,19 @@ public:
                 MPI_Status prob_status;
                 MPI_Probe(src, Tag_Msg, MPI_COMM_WORLD, &prob_status);
                 int sz;
-                MPI_Get_count(&prob_status, get_mpi_data_type<char>(), &sz);
+                MPI_Get_count(&prob_status, MPI_CHAR, &sz);
                 //printf("recv %u <- %u: %zu\n", local_partition_id, src, sz / sizeof(msg_t));
                 MPI_Request *recv_req = new MPI_Request();
                 requests[src].push_back(recv_req);
                 if (zero_copy_data == nullptr)
                 {
-                    MPI_Irecv(((msg_t*)msg_recv_buffer[src]->data) + msg_recv_buffer[src]->count, sz, get_mpi_data_type<char>(), src, Tag_Msg, MPI_COMM_WORLD, recv_req);
+                    MPI_Irecv(((msg_t*)msg_recv_buffer[src]->data) + msg_recv_buffer[src]->count, sz, MPI_CHAR, src,
+                              Tag_Msg, MPI_COMM_WORLD, recv_req);
                     msg_recv_buffer[src]->count += sz / sizeof(msg_t);
                     msg_recv_buffer[src]->template self_check<msg_t>();
                 } else
                 {
-                    MPI_Irecv(zero_copy_data + zero_copy_recv_count, sz, get_mpi_data_type<char>(), src, Tag_Msg, MPI_COMM_WORLD, recv_req);
+                    MPI_Irecv(zero_copy_data + zero_copy_recv_count, sz, MPI_CHAR, src, Tag_Msg, MPI_COMM_WORLD, recv_req);
                     zero_copy_recv_count += sz / sizeof(msg_t);
                 }
             };
@@ -796,7 +638,8 @@ public:
                 msg_send_buffer[dst]->template self_check<msg_t>();
                 MPI_Request* req = new MPI_Request();
                 requests.push_back(req);
-                MPI_Isend(((msg_t*)msg_send_buffer[dst]->data) + send_progress[dst], diff * sizeof(msg_t), get_mpi_data_type<char>(), dst, Tag_Msg, MPI_COMM_WORLD, req);
+                MPI_Isend(((msg_t*)msg_send_buffer[dst]->data) + send_progress[dst], diff * sizeof(msg_t), MPI_CHAR,
+                          dst, Tag_Msg, MPI_COMM_WORLD, req);
 #ifdef PERF_PROF
                 if (local_partition_id == 0)
                 {
@@ -861,7 +704,7 @@ public:
         {
             flush_workload += thread_local_msg_buffer[t_i]->count;
         }
-#pragma omp parallel for if (flush_workload * 2 >= OMP_PARALLEL_THRESHOLD)
+#pragma omp parallel for if (flush_workload * 2 >= kklib::omp_parallel_threshold)
         for (partition_id_t t_i = 0; t_i < worker_num; t_i++)
         {
             flush_thread_local_msg_buffer<msg_t>(t_i);
@@ -913,30 +756,29 @@ public:
         }
 #endif
         size_t glb_msg_num;
-        MPI_Allreduce(&msg_num, &glb_msg_num, 1, get_mpi_data_type<size_t>(), MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&msg_num, &glb_msg_num, 1, kklib::deduce_mpi_data_type<size_t>(), MPI_SUM, MPI_COMM_WORLD);
         return glb_msg_num;
     }
 
-    template<typename reducer_data_t>
-    reducer_data_t process_vertices(std::function<reducer_data_t(vertex_id_t)> process)
+    template <typename reducer_data_t> reducer_data_t process_vertices(std::function<reducer_data_t(VertexID)> process)
     {
-        vertex_id_t progress = vertex_partition_begin[local_partition_id];
-        vertex_id_t step_length = PARALLEL_CHUNK_SIZE;
+        VertexID progress = vertex_partition_begin[local_partition_id];
+        VertexID step_length = kklib::parallel_chunk_size;
         reducer_data_t reducer = 0;
 #pragma omp parallel reduction(+:reducer)
         {
-            vertex_id_t work_begin, work_end;
+            VertexID work_begin, work_end;
             while ((work_begin = __sync_fetch_and_add(&progress, step_length)) < vertex_partition_end[local_partition_id])
             {
-                vertex_id_t work_end = std::min(work_begin + step_length, vertex_partition_end[local_partition_id]);
-                for (vertex_id_t v_i = work_begin; v_i != work_end; v_i++)
+                VertexID work_end = std::min(work_begin + step_length, vertex_partition_end[local_partition_id]);
+                for (VertexID v_i = work_begin; v_i != work_end; v_i++)
                 {
                     reducer += process(v_i);
                 }
             }
         }
         reducer_data_t glb_reducer;
-        MPI_Allreduce(&reducer, &glb_reducer, 1, get_mpi_data_type<reducer_data_t>(), MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&reducer, &glb_reducer, 1, kklib::deduce_mpi_data_type<reducer_data_t>(), MPI_SUM, MPI_COMM_WORLD);
         return glb_reducer;
     }
 };

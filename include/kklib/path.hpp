@@ -1,55 +1,39 @@
-/*
- * The MIT License (MIT)
- *
- * Copyright (c) 2019 Ke Yang, Tsinghua University 
- * 
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- */
-
 #pragma once
 
-#include <string.h>
-#include <vector>
-#include <mutex>
-#include <thread>
+#include <kklib/constants.hpp>
+#include <kklib/mpi_helper.hpp>
+#include <kklib/type.hpp>
+#include <kklib/util.hpp>
 
-#include "type.hpp"
-#include "util.hpp"
-#include "constants.hpp"
-#include "mpi_helper.hpp"
+#include <gdsb/mpi_graph_io.h>
+
+#include <mutex>
+#include <sstream>
+#include <string.h>
+#include <thread>
+#include <vector>
 
 struct Footprint
 {
     walker_id_t walker;
-    vertex_id_t vertex;
+    VertexID vertex;
     step_t step;
     Footprint () {}
-    Footprint (walker_id_t _walker, vertex_id_t _vertex, step_t _step) : walker(_walker), vertex(_vertex), step(_step) {}
+    Footprint(walker_id_t _walker, VertexID _vertex, step_t _step)
+    : walker(_walker)
+    , vertex(_vertex)
+    , step(_step)
+    {
+    }
 };
 
 struct PathSet
 {
     int seg_num;
-    vertex_id_t **path_set;
+    VertexID** path_set;
     walker_id_t **walker_id;
-    vertex_id_t ***path_begin;
-    vertex_id_t ***path_end;
+    VertexID*** path_begin;
+    VertexID*** path_end;
     step_t **path_length;
     walker_id_t *path_num;
     PathSet ()
@@ -82,6 +66,7 @@ struct PathSet
             delete []path_num;
         }
     }
+
     void dump(const char* output_path, const char* fopen_mode, bool with_head_info)
     {
         Timer timer;
@@ -103,9 +88,68 @@ struct PathSet
             }
         }
         fclose(f);
-#ifndef UNIT_TEST
+#if !defined(UNIT_TEST) && !defined(NDEBUG)
         printf("finish write path data in %lf seconds \n", timer.duration());
 #endif
+    }
+
+    void mpi_dump(std::string const& output_path)
+    {
+        std::filesystem::path file_path(output_path);
+        constexpr bool overwrite_file = true;
+        gdsb::mpi::FileWrapper file(file_path, overwrite_file, 0, MPI_MODE_CREATE | MPI_MODE_WRONLY);
+
+        if (get_mpi_rank() == 0)
+        {
+            std::string header_line = std::to_string(walker_id[0][0]) + " " + std::to_string(path_length[0][0]);
+            MPI_Status status;
+            MPI_File_write(file.get(), header_line.c_str(), header_line.size(), MPI_CHAR, &status);
+        }
+
+        std::string const buffer = [&]() -> std::string
+        {
+            std::stringstream ss;
+            for (int wo_i = 0; wo_i < seg_num; ++wo_i)
+            {
+                for (walker_id_t wa_i = 0; wa_i < path_num[wo_i]; wa_i++)
+                {
+                    for (step_t p_i = 0; p_i < path_length[wo_i][wa_i]; p_i++)
+                    {
+                        ss << " " << *(path_begin[wo_i][wa_i] + p_i);
+                    }
+
+                    ss << "\n";
+                }
+            }
+
+            return ss.str();
+        }();
+
+        std::vector<uint32_t> buffer_sizes(get_mpi_size(), 0);
+        uint32_t const my_buffer_size = buffer.size();
+
+        int allgather_error = MPI_Allgather(&my_buffer_size, 1, MPI_UINT32_T, &(buffer_sizes[0]), 1, MPI_UINT32_T, MPI_COMM_WORLD);
+        if (allgather_error != MPI_SUCCESS)
+        {
+            throw std::runtime_error("Could not gather respective sizes of buffers.");
+        }
+
+        uint64_t const offset = [&]() -> uint64_t
+        {
+            uint64_t acc = 0;
+            for (size_t i = 0; i < get_mpi_rank(); ++i)
+            {
+                acc += buffer_sizes[i];
+            }
+            return acc;
+        }();
+
+        MPI_Status status;
+        int file_write_all = MPI_File_write_at_all(file.get(), offset, buffer.c_str(), buffer.size(), MPI_CHAR, &status);
+        if (file_write_all != MPI_SUCCESS)
+        {
+            throw std::runtime_error("Could not write file using MPI routine.");
+        }
     }
 };
 
@@ -149,10 +193,10 @@ public:
         MessageBuffer* &fp_buffer = thread_local_fp[worker];
         if (fp_buffer == nullptr)
         {
-            fp_buffer = new MessageBuffer(sizeof(Footprint) * FOOT_PRINT_CHUNK_SIZE);
+            fp_buffer = new MessageBuffer(sizeof(Footprint) * kklib::foot_print_chunk_size);
         }
         fp_buffer->write(&ft);
-        if (fp_buffer->count == FOOT_PRINT_CHUNK_SIZE)
+        if (fp_buffer->count == kklib::foot_print_chunk_size)
         {
             node_local_fp_lock.lock();
             node_local_fp.push_back(fp_buffer);
@@ -227,7 +271,7 @@ public:
         {
             int worker_id = omp_get_thread_num();
             size_t next_workload;
-            const size_t LOCAL_BUF_SIZE = THREAD_LOCAL_BUF_CAPACITY;
+            const size_t LOCAL_BUF_SIZE = kklib::thread_local_buf_capacity;
             MessageBuffer* local_buf[partition_num];
             for (partition_id_t p_i = 0; p_i < partition_num; p_i++)
             {
@@ -270,7 +314,7 @@ public:
         }
         node_local_fp.clear();
         size_t glb_send_fp_num[partition_num];
-        MPI_Allreduce(send_fp_num, glb_send_fp_num, partition_num, get_mpi_data_type<size_t>(), MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(send_fp_num, glb_send_fp_num, partition_num, kklib::deduce_mpi_data_type<size_t>(), MPI_SUM, MPI_COMM_WORLD);
         size_t total_recv_fp_num = glb_send_fp_num[partition_id];
 		size_t recv_fp_pos = 0;
         Footprint* recv_buf = new Footprint[total_recv_fp_num];
@@ -287,14 +331,14 @@ public:
                 void* send_data = send_buf + send_fp_pos[dst];
                 while (true)
                 {
-                    MPI_Send(&tot_send_sz, 1, get_mpi_data_type<size_t>(), dst, 0, MPI_COMM_WORLD);
+                    MPI_Send(&tot_send_sz, 1, kklib::deduce_mpi_data_type<size_t>(), dst, 0, MPI_COMM_WORLD);
                     if (tot_send_sz == 0)
                     {
                         break;
                     }
                     size_t send_sz = std::min((size_t)max_single_send_sz, tot_send_sz);
                     tot_send_sz -= send_sz;
-                    MPI_Send(send_data, send_sz, get_mpi_data_type<char>(), dst, 0, MPI_COMM_WORLD);
+                    MPI_Send(send_data, send_sz, MPI_CHAR, dst, 0, MPI_COMM_WORLD);
                     send_data = (char*)send_data + send_sz;
                 }
             }
@@ -306,7 +350,7 @@ public:
                 while (true)
                 {
                     size_t remained_sz;
-                    MPI_Recv(&remained_sz, 1, get_mpi_data_type<size_t>(), src, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                    MPI_Recv(&remained_sz, 1, kklib::deduce_mpi_data_type<size_t>(), src, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
                     if (remained_sz == 0)
                     {
                         break;
@@ -314,9 +358,9 @@ public:
                     MPI_Status recv_status;
                     MPI_Probe(src, 0, MPI_COMM_WORLD, &recv_status);
                     int sz;
-                    MPI_Get_count(&recv_status, get_mpi_data_type<char>(), &sz);
+                    MPI_Get_count(&recv_status, MPI_CHAR, &sz);
 
-                    MPI_Recv(recv_buf + recv_fp_pos, sz, get_mpi_data_type<char>(), src, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                    MPI_Recv(recv_buf + recv_fp_pos, sz, MPI_CHAR, src, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
                     recv_fp_pos += sz / sizeof(Footprint);
                 }
             }
@@ -326,7 +370,7 @@ public:
         delete []send_buf;
 
         //shuffle task locally
-        const size_t large_step_size = PARALLEL_CHUNK_SIZE * worker_num;
+        const size_t large_step_size = kklib::parallel_chunk_size * worker_num;
         const size_t task_num = (total_recv_fp_num + large_step_size - 1) / large_step_size;
         Footprint** task_begin[worker_num];
         Footprint** task_end[worker_num];
@@ -379,9 +423,9 @@ public:
         }
 
         //do tasks
-        vertex_id_t* path_set[worker_num];
-        vertex_id_t** path_begin[worker_num];
-        vertex_id_t** path_end[worker_num];
+        VertexID* path_set[worker_num];
+        VertexID** path_begin[worker_num];
+        VertexID** path_end[worker_num];
         walker_id_t* walker_id[worker_num];
         step_t* path_length[worker_num];
         walker_id_t path_num[worker_num];
@@ -408,9 +452,9 @@ public:
             }
             walker_id_t max_walker_idx = get_walker_local_idx(max_walker_id);
             walker_id_t thread_walker_num = has_any_walker ? max_walker_idx + 1 : 0;
-            path_set[worker_id] = new vertex_id_t[step_num];
-            path_begin[worker_id] = new vertex_id_t*[thread_walker_num];
-            path_end[worker_id] = new vertex_id_t*[thread_walker_num];
+            path_set[worker_id] = new VertexID[step_num];
+            path_begin[worker_id] = new VertexID*[thread_walker_num];
+            path_end[worker_id] = new VertexID*[thread_walker_num];
             walker_id[worker_id] = new walker_id_t[thread_walker_num];
             path_length[worker_id] = new step_t[thread_walker_num];
             path_num[worker_id] = thread_walker_num;
@@ -455,10 +499,10 @@ public:
         delete []recv_buf;
         PathSet* ps = new PathSet();
         ps->seg_num = worker_num;
-        ps->path_set = new vertex_id_t*[worker_num];
+        ps->path_set = new VertexID*[worker_num];
         ps->walker_id = new walker_id_t*[worker_num];
-        ps->path_begin = new vertex_id_t**[worker_num];
-        ps->path_end = new vertex_id_t**[worker_num];
+        ps->path_begin = new VertexID**[worker_num];
+        ps->path_end = new VertexID**[worker_num];
         ps->path_length = new step_t*[worker_num];
         ps->path_num = new walker_id_t[worker_num];
         for (int w_i = 0; w_i < worker_num; w_i++)
@@ -470,7 +514,7 @@ public:
             ps->path_length[w_i] = path_length[w_i];
             ps->path_num[w_i] = path_num[w_i];
         }
-#ifndef UNIT_TEST
+#if !defined(UNIT_TEST) && !defined(NDEBUG)
         printf("finish assembling in %lf seconds\n", timer.duration());
 #endif
         return ps;
