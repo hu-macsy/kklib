@@ -43,10 +43,6 @@ target_link_libraries(kklib PRIVATE MPI::MPI_CXX)
 find_package(OpenMP)
 target_link_libraries(kklib PRIVATE OpenMP::OpenMP_CXX)
 
-# TBB
-find_package(TBB REQUIRED)
-target_link_libraries(kklib PRIVATE TBB::tbb)
-
 target_include_directories(kklib
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
